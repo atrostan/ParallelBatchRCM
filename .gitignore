@@ -2,3 +2,5 @@ build/
 mats/
 .vscode
 __pycache__
+cmake-build-debug/
+.idea/

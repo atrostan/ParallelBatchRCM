@@ -213,12 +213,11 @@ void convert(COO<T>& dst, const CSR<T>& src)
 	std::vector<unsigned int> rows;
 	std::vector<unsigned int> cols;
 	std::vector<T> data;
-
 	for (unsigned int row_it = 0; row_it < src.rows; ++row_it)
 	{
 		for (unsigned int col_it = src.row_offsets[row_it]; col_it < src.row_offsets[row_it+1]; ++col_it)
 		{
-			cols.push_back(src.col_ids[col_it]);
+ 			cols.push_back(src.col_ids[col_it]);
 			rows.push_back(row_it);
 			data.push_back(src.data[col_it]);
 		}

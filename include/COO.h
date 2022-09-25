@@ -48,6 +48,9 @@ struct COO
 
 template<typename T>
 COO<T> loadMTX(const char* file);
+
+COO<float> loadNet(std::string path, uint32_t n, uint64_t m, bool symmetric);
+
 template<typename T>
 COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, bool& hermitian);
 template<typename T>
@@ -56,3 +59,4 @@ template<typename T>
 void storeCOO(const COO<T>& mat, const char* file);
 template<typename T>
 void storeMTX(const COO<T>& mat, const char* file);
+

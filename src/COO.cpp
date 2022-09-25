@@ -51,6 +51,7 @@ namespace {
 			return type.compare("real") == 0 || type.compare("integer") == 0;
 		}
 	};
+
 	template<>
 	struct DataTypeValidator<double> {
 		static bool validate(std::string type) {
@@ -67,8 +68,7 @@ namespace {
 }
 
 template<typename T>
-void COO<T>::alloc(size_t r, size_t c, size_t n)
-{
+void COO<T>::alloc(size_t r, size_t c, size_t n) {
 	rows = r;
 	cols = c;
 	nnz = n;
@@ -80,18 +80,82 @@ void COO<T>::alloc(size_t r, size_t c, size_t n)
 
 
 template<typename T>
-COO<T> loadMTX(const char* file)
-{
+COO<T> loadMTX(const char *file) {
 	bool a, b, c, d;
 	return loadMTX<T>(file, a, b, c, d);
 }
+
+
+COO<float> loadNet(std::string file, uint32_t n, uint64_t m, bool symmetric) {
+	std::ifstream fstream(file);
+	COO<float> resmatrix;
+	size_t num_rows, num_columns, num_non_zeroes;
+	num_rows = num_columns = n;
+	num_non_zeroes = m;
+	size_t line_counter = 0;
+	std::string line;
+
+	size_t reserve = num_non_zeroes;
+	resmatrix.alloc(num_rows, num_columns, reserve);
+
+	size_t read = 0;
+	while (std::getline(fstream, line)) {
+		++line_counter;
+		if (line[0] == '%')
+			continue;
+
+		std::istringstream liness(line);
+
+
+		do {
+			char ch;
+			liness.get(ch);
+			if (!isspace(ch)) {
+				liness.putback(ch);
+				break;
+			}
+
+		} while (!liness.eof());
+		if (liness.eof() || line.length() == 0)
+			continue;
+
+		uint32_t r, c;
+		int d;
+		liness >> r >> c;
+		d = 1;
+		if (liness.fail())
+			throw std::runtime_error(
+					std::string("Failed to read data at line ") + std::to_string(line_counter) + " from matrix market file \"" +
+					file + "\"");
+		if (r > num_rows)
+			throw std::runtime_error(std::string("Row index out of bounds at line  ") + std::to_string(line_counter) +
+			                         " in matrix market file \"" + file + "\"");
+		if (c > num_columns)
+			throw std::runtime_error(std::string("Column index out of bounds at line  ") + std::to_string(line_counter) +
+			                         " in matrix market file \"" + file + "\"");
+
+		resmatrix.row_ids[read] = r;
+		resmatrix.col_ids[read] = c;
+		resmatrix.data[read] = d;
+		++read;
+		if ((symmetric) && r != c) {
+			resmatrix.row_ids[read] = c;
+			resmatrix.col_ids[read] = r;
+			resmatrix.data[read] = d;
+			++read;
+		}
+	}
+
+	resmatrix.nnz = read;
+	return resmatrix;
+}
+
 template<typename T>
-COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, bool& hermitian)
-{
+COO<T> loadMTX(const char *file, bool &pattern, bool &complex, bool &symmetric, bool &hermitian) {
 	std::ifstream fstream(file);
 	if (!fstream.is_open())
 		throw std::runtime_error(std::string("could not open \"") + file + "\"");
-	
+
 	COO<T> resmatrix;
 	size_t num_rows, num_columns, num_non_zeroes;
 
@@ -104,7 +168,7 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 	if (line.compare(0, 32, "%%MatrixMarket matrix coordinate") != 0)
 		throw std::runtime_error("Can only read MatrixMarket format that is in coordinate form");
 	std::istringstream iss(line);
-	std::vector<std::string> tokens{ std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{} };
+	std::vector<std::string> tokens{std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{}};
 	complex = false;
 
 	if (tokens[3] == "pattern")
@@ -123,8 +187,7 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 	else
 		throw std::runtime_error("Can only read MatrixMarket format that is either symmetric, general or hermitian");
 
-	while (std::getline(fstream, line))
-	{
+	while (std::getline(fstream, line)) {
 		++line_counter;
 		if (line[0] == '%')
 			continue;
@@ -144,8 +207,7 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 
 	//read data
 	size_t read = 0;
-	while (std::getline(fstream, line))
-	{
+	while (std::getline(fstream, line)) {
 		++line_counter;
 		if (line[0] == '%')
 			continue;
@@ -153,12 +215,10 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 		std::istringstream liness(line);
 
 
-		do
-		{
+		do {
 			char ch;
 			liness.get(ch);
-			if (!isspace(ch))
-			{
+			if (!isspace(ch)) {
 				liness.putback(ch);
 				break;
 			}
@@ -175,18 +235,21 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 		else
 			liness >> d;
 		if (liness.fail())
-			throw std::runtime_error(std::string("Failed to read data at line ") + std::to_string(line_counter) + " from matrix market file \"" + file + "\"");
+			throw std::runtime_error(
+					std::string("Failed to read data at line ") + std::to_string(line_counter) + " from matrix market file \"" +
+					file + "\"");
 		if (r > num_rows)
-			throw std::runtime_error(std::string("Row index out of bounds at line  ") + std::to_string(line_counter) + " in matrix market file \"" + file + "\"");
+			throw std::runtime_error(std::string("Row index out of bounds at line  ") + std::to_string(line_counter) +
+			                         " in matrix market file \"" + file + "\"");
 		if (c > num_columns)
-			throw std::runtime_error(std::string("Column index out of bounds at line  ") + std::to_string(line_counter) + " in matrix market file \"" + file + "\"");
-		
+			throw std::runtime_error(std::string("Column index out of bounds at line  ") + std::to_string(line_counter) +
+			                         " in matrix market file \"" + file + "\"");
+
 		resmatrix.row_ids[read] = r - 1;
 		resmatrix.col_ids[read] = c - 1;
 		resmatrix.data[read] = d;
 		++read;
-		if ((symmetric || hermitian) && r != c)
-		{
+		if ((symmetric || hermitian) && r != c) {
 			resmatrix.row_ids[read] = c - 1;
 			resmatrix.col_ids[read] = r - 1;
 			resmatrix.data[read] = d;
@@ -199,37 +262,33 @@ COO<T> loadMTX(const char* file, bool& pattern, bool& complex, bool& symmetric, 
 }
 
 template<typename T>
-COO<T> loadCOO(const char * file)
-{
+COO<T> loadCOO(const char *file) {
 	return COO<T>();
 }
 
 template<typename T>
-void storeCOO(const COO<T>& mat, const char * file)
-{
+void storeCOO(const COO<T> &mat, const char *file) {
 
 }
 
 template<typename T>
-void storeMTX(const COO<T>& mat, const char* file)
-{	 
+void storeMTX(const COO<T> &mat, const char *file) {
 	static constexpr int THRESHOLD = 64 * 1024 * 1024;
-	
+
 	std::ofstream fstream(file, std::fstream::out);
 	if (!fstream.is_open())
 		throw std::runtime_error(std::string("could not open \"") + file + "\"");
 
 	std::string buffer;
 	buffer.reserve(THRESHOLD);
-	
+
 	fstream << "%%MatrixMarket matrix coordinate real general\n";
 	fstream << mat.rows << " " << mat.cols << " " << mat.nnz << "\n";
 
 	std::string line;
 	line.reserve(64);
 
-	for (size_t i = 0; i < mat.nnz; ++i)
-	{
+	for (size_t i = 0; i < mat.nnz; ++i) {
 		line.resize(0);
 		line.append(std::to_string(mat.row_ids[i] + 1));
 		line.append(" ");
@@ -237,9 +296,8 @@ void storeMTX(const COO<T>& mat, const char* file)
 		line.append(" ");
 		line.append(std::to_string(mat.data[i]));
 		line.append("\n");
-		
-		if (buffer.length() + line.length() >= THRESHOLD)
-		{
+
+		if (buffer.length() + line.length() >= THRESHOLD) {
 			fstream << buffer;
 			buffer.resize(0);
 		}
@@ -251,10 +309,13 @@ void storeMTX(const COO<T>& mat, const char* file)
 }
 
 template void COO<float>::alloc(size_t, size_t, size_t);
+
 template void COO<double>::alloc(size_t, size_t, size_t);
 
-template COO<float> loadMTX(const char * file);
-template COO<double> loadMTX(const char * file);
+template COO<float> loadMTX(const char *file);
 
-template void storeMTX(const COO<float>& mat, const char* file);
-template void storeMTX(const COO<double>& mat, const char* file);
+template COO<double> loadMTX(const char *file);
+
+template void storeMTX(const COO<float> &mat, const char *file);
+
+template void storeMTX(const COO<double> &mat, const char *file);

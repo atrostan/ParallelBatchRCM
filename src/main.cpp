@@ -39,6 +39,7 @@
 
 #include "args.h"
 
+#include "../include/COO.h"
 #include "CSR.h"
 #include "Graph.h"
 #include "dGraph.h"
@@ -52,28 +53,23 @@
 #include "rcm_gpu_batch.h"
 
 
-namespace
-{
+namespace {
 
-	struct voidStream : std::ostream
-	{
-		struct voidBuff : std::streambuf
-		{
+	struct voidStream : std::ostream {
+		struct voidBuff : std::streambuf {
 			int overflow(int) override { return -1; };
 		} buffer;
 
 		voidStream()
-			: std::ostream(&buffer)
-		{}
+				: std::ostream(&buffer) {}
 	};
 }
 
 using DataType = float;
 
-std::string join(const std::vector<std::string>& pieces)
-{
+std::string join(const std::vector<std::string> &pieces) {
 	std::string joined = "{";
-	for (const auto& piece : pieces)
+	for (const auto &piece: pieces)
 		joined += piece + ", ";
 
 	joined.pop_back();
@@ -83,78 +79,70 @@ std::string join(const std::vector<std::string>& pieces)
 	return joined;
 }
 
-struct BandwidthMetric
-{
+struct BandwidthMetric {
 	unsigned int min_row_bw{0U};
 	unsigned int max_row_bw{0U};
 	unsigned int avg_row_bw{0U};
 	unsigned int median_row_bw{0U};
 };
 
-BandwidthMetric computeBandwidthMetric(const Graph<DataType>& graph)
-{
+BandwidthMetric computeBandwidthMetric(const Graph<DataType> &graph) {
 	BandwidthMetric metric;
-	auto& matrix = graph.csr;
+	auto &matrix = graph.csr;
 	std::vector<unsigned int> row_bw;
 	row_bw.reserve(matrix.rows);
 
-	for(size_t i = 0; i < matrix.rows; ++i)
-	{
-		row_bw.push_back(matrix.col_ids[matrix.row_offsets[i + 1]- 1] - matrix.col_ids[matrix.row_offsets[i]]);
+	for (size_t i = 0; i < matrix.rows; ++i) {
+		row_bw.push_back(matrix.col_ids[matrix.row_offsets[i + 1] - 1] - matrix.col_ids[matrix.row_offsets[i]]);
 	}
 	std::sort(row_bw.begin(), row_bw.end());
 	metric.min_row_bw = *std::min_element(row_bw.begin(), row_bw.end());
 	metric.max_row_bw = *std::max_element(row_bw.begin(), row_bw.end());
-	metric.median_row_bw = row_bw[row_bw.size()/2];
+	metric.median_row_bw = row_bw[row_bw.size() / 2];
 	metric.avg_row_bw = std::accumulate(row_bw.begin(), row_bw.end(), 0u) / row_bw.size();
 
 	return metric;
 }
 
-int checkBandwidth(const Graph<DataType>& graph)
-{
-	auto& matrix = graph.csr;
+int checkBandwidth(const Graph<DataType> &graph) {
+	auto &matrix = graph.csr;
 	int bandwidth{0};
-	for(int i = 0; i < static_cast<int>(matrix.rows); ++i)
-	{
+	for (int i = 0; i < static_cast<int>(matrix.rows); ++i) {
 		int min{i - static_cast<int>(matrix.col_ids[matrix.row_offsets[i]])};
-		int max{static_cast<int>(matrix.col_ids[matrix.row_offsets[i + 1]- 1]) - i};
-		
+		int max{static_cast<int>(matrix.col_ids[matrix.row_offsets[i + 1] - 1]) - i};
+
 		max = std::max(min, max);
-		
-		if(bandwidth < max)
+
+		if (bandwidth < max)
 			bandwidth = max;
 	}
 	return bandwidth;
 }
 
-int maxValency(const Graph<DataType>& graph)
-{
-	auto& matrix = graph.csr;
+int maxValency(const Graph<DataType> &graph) {
+	auto &matrix = graph.csr;
 	int max_valency = 0;
 	for (size_t i = 0; i < matrix.rows; ++i)
 		max_valency = std::max(static_cast<int>(matrix.row_offsets[i + 1])
-			- static_cast<int>(matrix.row_offsets[i]), max_valency);
+		                       - static_cast<int>(matrix.row_offsets[i]), max_valency);
 
 	return max_valency;
 }
 
 
-int computeBandwidth(const Graph<DataType>& graph, std::vector<uint32_t>& permutation)
-{	
+int computeBandwidth(const Graph<DataType> &graph, std::vector<uint32_t> &permutation) {
 	if (permutation.empty())
 		return -1;
 
-	auto& matrix = graph.csr;
-	int bandwidth{ 0 };
+	auto &matrix = graph.csr;
+	int bandwidth{0};
 
 	std::vector<uint32_t> invperm(permutation.size());
 	for (size_t i = 0; i < permutation.size(); ++i)
 		invperm[permutation[i]] = i;
 
 	std::vector<unsigned int> this_row(20);
-	for (size_t i = 0; i < matrix.rows; ++i)
-	{
+	for (size_t i = 0; i < matrix.rows; ++i) {
 		auto row_start = matrix.row_offsets[i];
 		auto row_end = matrix.row_offsets[i + 1];
 		auto this_row_len = row_end - row_start;
@@ -163,16 +151,15 @@ int computeBandwidth(const Graph<DataType>& graph, std::vector<uint32_t>& permut
 			this_row.resize(this_row_len * 1.2);
 
 		std::transform(matrix.col_ids.get() + row_start, matrix.col_ids.get() + row_end, std::begin(this_row),
-			[&invperm](const auto& x)
-			{
-				return invperm[x];
-			});
+		               [&invperm](const auto &x) {
+			               return invperm[x];
+		               });
 
 		const auto [min_cid, max_cid] = std::minmax_element(std::begin(this_row), std::begin(this_row) + this_row_len);
 		int this_rid = static_cast<int>(invperm[i]);
 
-		int lower{ this_rid - static_cast<int>(*min_cid) };
-		int upper{ static_cast<int>(*max_cid) - this_rid };
+		int lower{this_rid - static_cast<int>(*min_cid)};
+		int upper{static_cast<int>(*max_cid) - this_rid};
 
 		auto max_bw = std::max(lower, upper);
 
@@ -183,14 +170,11 @@ int computeBandwidth(const Graph<DataType>& graph, std::vector<uint32_t>& permut
 	return bandwidth;
 }
 
-int checkPermutation(const std::vector<uint32_t>& permutation)
-{
+int checkPermutation(const std::vector<uint32_t> &permutation) {
 	bool result = true;
 	uint32_t i = 0;
-	for (auto element : permutation)
-	{
-		if (element > permutation.size())
-		{
+	for (auto element: permutation) {
+		if (element > permutation.size()) {
 			std::cout << "ERROR: element " << i << " in permutation element too big (" << element << ")" << std::endl;
 			result = false;
 		}
@@ -205,17 +189,14 @@ int checkPermutation(const std::vector<uint32_t>& permutation)
 
 	std::fill(present.begin(), present.end(), 0);
 
-	for (auto element : permutation)
-	{
+	for (auto element: permutation) {
 		present[element] = 1;
 	}
 
 	uint32_t sum = std::accumulate(present.begin(), present.end(), 0u);
-	if (sum != permutation.size())
-	{
+	if (sum != permutation.size()) {
 		std::cout << "ERROR: " << permutation.size() - sum << " elements not present in permutation array" << std::endl;
-		for (auto i = 0U; i < present.size(); ++i)
-		{
+		for (auto i = 0U; i < present.size(); ++i) {
 			if (present[i] != 1)
 				std::cout << "Node: " << i << " is missing!\n";
 		}
@@ -225,8 +206,7 @@ int checkPermutation(const std::vector<uint32_t>& permutation)
 	return 0;
 }
 
-enum class Impl : int
-{
+enum class Impl : int {
 	NONE = -1,
 	ALL = 0,
 	cuSolverRCM = 1,
@@ -237,34 +217,46 @@ enum class Impl : int
 };
 
 
-int main(int argc, char** argv)
-{
-	const std::vector<std::string> implementations = { "ALL" , "cuSolverRCM", "CPU", "CPU_BATCH", "GPU", "GPU_BATCH"};
+int main(int argc, char **argv) {
+	const std::vector<std::string> implementations = {"ALL", "cuSolverRCM", "CPU", "CPU_BATCH", "GPU", "GPU_BATCH"};
 	const std::string implementations_string = join(implementations);
 
-	args::ArgumentParser parser("Computes the Cuthill-McKee reordering of a sparse quadratic matrix given in the CSR format.", "");
-	args::HelpFlag arg_help(parser, "help", "Display this help menu", { 'h', "help" });
-	args::Positional<std::string> arg_input(parser, "input", "quadratic matrix in CSR format to reorder", args::Options::Required);
-	args::ValueFlag<std::string> arg_implemenation(parser, "implementation", "Select an RCM implementation. Available values are: " + implementations_string, 
-		{'i', "implementation"}, "None");
-	args::Flag arg_reverse(parser, "reverse", "Revert CM permutation (RCM).", { 'r', "reverse" });
-	args::ValueFlag<int> arg_start(parser, "start", "Manually pick start node. If not specified, a pseudo-peripheral node is selected automatically.", { 's', "start" });
-	args::ValueFlag<int> arg_stablesort(parser, "stable", "Select whether sorting should be stable.", { 'b', "stable" });
-	args::Flag arg_testbandwidth(parser, "bandwidth", "Select whether to compute the bandwidth of reordered matrix.", { 'w', "bandwidth" });
-	args::ValueFlag<int> arg_threads(parser, "threads", "Select the number of threads to run for CPU_BATCH.", { 't', "threads" });
-	args::ValueFlag<std::string> arg_perf_file(parser, "perffile", "File to store the performance data.", { "f", "perffile" }, "perf.csv");
-	args::ValueFlag<std::string> arg_output(parser, "output", "File to store the reorder matrix.", { 'o', "output" });
+	args::ArgumentParser parser(
+			"Computes the Cuthill-McKee reordering of a sparse quadratic matrix given in the CSR format.", "");
+	args::HelpFlag arg_help(parser, "help", "Display this help menu", {'h', "help"});
+	args::Positional<std::string> arg_input(parser, "input", "quadratic matrix in CSR format to reorder",
+	                                        args::Options::Required);
+	args::ValueFlag<std::string> arg_implemenation(parser, "implementation",
+	                                               "Select an RCM implementation. Available values are: " +
+	                                               implementations_string,
+	                                               {'i', "implementation"}, "None");
+	args::Flag arg_reverse(parser, "reverse", "Revert CM permutation (RCM).", {'r', "reverse"});
+	args::Flag arg_directed(parser, "directed", "Whether the graph is directed or not", {'d', "directed"});
+	args::ValueFlag<uint32_t> arg_n(parser, "n", "Number of nodes in the compressed graph.", {'n', "num_nodes"});
+	args::ValueFlag<uint64_t> arg_m(parser, "m", "Number of edges in the compressed graph", {'m', "num_edges"});
+	args::ValueFlag<int> arg_start(parser, "start",
+	                               "Manually pick start node. If not specified, a pseudo-peripheral node is selected automatically.",
+	                               {'s', "start"});
+	args::ValueFlag<int> arg_stablesort(parser, "stable", "Select whether sorting should be stable.", {'b', "stable"});
+	args::Flag arg_testbandwidth(parser, "bandwidth", "Select whether to compute the bandwidth of reordered matrix.",
+	                             {'w', "bandwidth"});
+	args::ValueFlag<int> arg_threads(parser, "threads", "Select the number of threads to run for CPU_BATCH.",
+	                                 {'t', "threads"});
+	args::ValueFlag<std::string> arg_perf_file(parser, "perffile", "File to store the performance data.",
+	                                           {"f", "perffile"}, "perf.csv");
+	args::ValueFlag<std::string> arg_output(parser, "output", "File to store the reorder matrix.", {'o', "output"});
+	args::ValueFlag<std::string> arg_rev_cm_path(parser, "rcm_output",
+	                                             "File to store the reversed cuthill mckee mapping.", {'m', "rcm"});
+	args::ValueFlag<std::string> arg_sqlite3_db_path(parser, "sqlite3_db_path", "Path to sqlite3 db.",
+	                                                 {'q', "sqlite3_db"});
 
-	try
-	{
+	try {
 		parser.ParseCLI(argc, argv);
 	}
-	catch (args::Help&)
-	{
+	catch (args::Help &) {
 		std::cout << parser;
 	}
-	catch (args::Error& e)
-	{
+	catch (args::Error &e) {
 		std::cerr << e.what() << std::endl << parser;
 		return -1;
 	}
@@ -272,18 +264,31 @@ int main(int argc, char** argv)
 	if (arg_help)
 		return 0;
 
-	int impl = std::distance(implementations.begin(), std::find(implementations.begin(), implementations.end(), arg_implemenation.Get()));
-	if (impl == static_cast<int>(implementations.size()))
-	{
+	int impl = std::distance(implementations.begin(),
+	                         std::find(implementations.begin(), implementations.end(), arg_implemenation.Get()));
+	if (impl == static_cast<int>(implementations.size())) {
 		impl = static_cast<int>(Impl::NONE);
 	}
+	std::cout << "HENLO\n";
+	uint32_t n = arg_n.Get();
+	uint64_t m = arg_m.Get();
+	bool directed = arg_directed.Get();
+	std::string rcm_path = arg_rev_cm_path.Get();
+	std::string sqlite3_db_path = arg_sqlite3_db_path.Get();
+	std::cout << "Additional Args: \n";
+	std::cout << "n: " << n << "\n";
+	std::cout << "m: " << m << "\n";
+	std::cout << "directed: " << directed << "\n";
+	std::cout << "rcm_path: " << rcm_path << "\n";
+	std::cout << "sqlite3_db_path: " << sqlite3_db_path << "\n";
 
-	bool testBandwidth{ arg_testbandwidth };
+
+	bool testBandwidth{arg_testbandwidth};
 
 	Graph<DataType> graph;
-
 	std::string mat_path = arg_input.Get();
-	int status = graph.load(mat_path);
+	int status = graph.load_net(mat_path, n, m, directed);
+//	int status = graph
 	if (status != 0)
 		return status;
 
@@ -291,33 +296,31 @@ int main(int argc, char** argv)
 	size_t length = mat_path.find_first_of(".", off) - off;
 	std::string mat_name = mat_path.substr(off, length);
 
-	std::cout << "\nMatrix " + mat_name << " " << graph.size << " x " << graph.size << " with " << graph.csr.nnz << " entries\n" << std::endl;
+	std::cout << "\nMatrix " + mat_name << " " << graph.size << " x " << graph.size << " with " << graph.csr.nnz
+	          << " entries\n" << std::endl;
 
 	// Create profiling output file
 	bool perf_file_exists = std::ifstream(arg_perf_file.Get()).good();
 
 	std::ofstream csv_result;
 	csv_result.open(arg_perf_file.Get(), std::ios_base::app);
-	
 
-	if(!perf_file_exists)
-	{
+
+	if (!perf_file_exists) {
 		if (testBandwidth)
 			csv_result << ", Initial Bandw." << std::flush;
 
 		csv_result << ", max_valency" << std::flush;
 		csv_result << ", start_node" << std::flush;
 
-		if (impl == static_cast<int>(Impl::cuSolverRCM) || impl == static_cast<int>(Impl::ALL))
-		{
+		if (impl == static_cast<int>(Impl::cuSolverRCM) || impl == static_cast<int>(Impl::ALL)) {
 			csv_result << ", cuSolver" << std::flush;
 			if (testBandwidth)
 				csv_result << ", Bandw." << std::flush;
 		}
 
 		// write csv header
-		if (impl == static_cast<int>(Impl::CPU))
-		{
+		if (impl == static_cast<int>(Impl::CPU)) {
 			int stable = 2;
 			if (arg_stablesort)
 				stable = arg_stablesort.Get();
@@ -330,14 +333,12 @@ int main(int argc, char** argv)
 				csv_result << ", Bandw." << std::flush;
 		}
 
-		if (impl == static_cast<int>(Impl::CPU_BATCH) || impl == static_cast<int>(Impl::ALL))
-		{
+		if (impl == static_cast<int>(Impl::CPU_BATCH) || impl == static_cast<int>(Impl::ALL)) {
 			int stable = 2;
 			if (arg_stablesort)
 				stable = arg_stablesort.Get();
 
-			for (int st = stable == 2 ? 0 : stable; st < 2; st += stable == 2 ? 1 : 2)
-			{
+			for (int st = stable == 2 ? 0 : stable; st < 2; st += stable == 2 ? 1 : 2) {
 				if (st == 0)
 					csv_result << ", CPU<single | NON_STABLE>" << std::flush;
 				else
@@ -345,28 +346,25 @@ int main(int argc, char** argv)
 				if (testBandwidth)
 					csv_result << ", Bandw." << std::flush;
 
-				for (int t = 1; t <= arg_threads.Get(); ++t)
-				{
+				for (int t = 1; t <= arg_threads.Get(); ++t) {
 					if (st == 0)
 						csv_result << ", CPU<" << t << " | NON_STABLE>" << std::flush;
 					else
 						csv_result << ", CPU<" << t << " | STABLE>" << std::flush;
-					
+
 					if (testBandwidth)
 						csv_result << ", Bandw." << std::flush;
 				}
 			}
 		}
-		if (impl == static_cast<int>(Impl::GPU) || impl == static_cast<int>(Impl::ALL))
-		{
+		if (impl == static_cast<int>(Impl::GPU) || impl == static_cast<int>(Impl::ALL)) {
 			csv_result << ", GPU" << std::flush;
 
 			if (testBandwidth)
 				csv_result << ", Bandw." << std::flush;
 		}
 
-		if (impl == static_cast<int>(Impl::GPU_BATCH) || impl == static_cast<int>(Impl::ALL))
-		{
+		if (impl == static_cast<int>(Impl::GPU_BATCH) || impl == static_cast<int>(Impl::ALL)) {
 			csv_result << ", GPU_BATCH" << std::flush;
 
 			if (testBandwidth)
@@ -379,7 +377,7 @@ int main(int argc, char** argv)
 
 	std::vector<uint32_t> permutation;
 	permutation.reserve(graph.csr.rows);
-	
+
 	if (testBandwidth)
 		csv_result << ", " << checkBandwidth(graph) << std::flush;
 
@@ -388,31 +386,31 @@ int main(int argc, char** argv)
 	unsigned int start;
 	if (arg_start)
 		start = arg_start.Get();
-	else
-	{
+	else {
 		voidStream no_out;
 		start = SimplePeripheral::findPeripheral(graph, no_out, (impl == static_cast<int>(Impl::ALL)));
 	}
 	csv_result << ", " << start << std::flush;
 
-	if (impl == static_cast<int>(Impl::cuSolverRCM) || impl == static_cast<int>(Impl::ALL))
-	{
-		csv_result << ","; csv_result << std::flush;
+	if (impl == static_cast<int>(Impl::cuSolverRCM) || impl == static_cast<int>(Impl::ALL)) {
+		csv_result << ",";
+		csv_result << std::flush;
 		permutation.clear();
 
 		CuSolverRCM::rcm(graph, csv_result, permutation);
 
 		checkPermutation(permutation);
-		if (testBandwidth)
-		{
+		if (testBandwidth) {
 			auto bandwidth = computeBandwidth(graph, permutation);
-			csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+			csv_result << ",";
+			csv_result << bandwidth;
+			csv_result << std::flush;
 		}
 	}
 
-	if (impl == static_cast<int>(Impl::CPU))
-	{
-		csv_result << ","; csv_result << std::flush;
+	if (impl == static_cast<int>(Impl::CPU)) {
+		csv_result << ",";
+		csv_result << std::flush;
 		permutation.clear();
 
 		int stable = 2;
@@ -424,38 +422,39 @@ int main(int argc, char** argv)
 			RealCPU::rcm<true>(graph, csv_result, permutation, start, 1, 1);
 
 		checkPermutation(permutation);
-		if (testBandwidth)
-		{
+		if (testBandwidth) {
 			auto bandwidth = computeBandwidth(graph, permutation);
-			csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+			csv_result << ",";
+			csv_result << bandwidth;
+			csv_result << std::flush;
 		}
 	}
 
-	if (impl == static_cast<int>(Impl::CPU_BATCH) || impl == static_cast<int>(Impl::ALL))
-	{
+	if (impl == static_cast<int>(Impl::CPU_BATCH) || impl == static_cast<int>(Impl::ALL)) {
 		permutation.clear();
 
 		int stable = 2;
 		if (arg_stablesort)
 			stable = arg_stablesort.Get();
 
-		for (int st = stable == 2 ? 0 : stable; st < 2; st += stable == 2 ? 1 : 2)
-		{
-			csv_result << ","; csv_result << std::flush;
+		for (int st = stable == 2 ? 0 : stable; st < 2; st += stable == 2 ? 1 : 2) {
+			csv_result << ",";
+			csv_result << std::flush;
 			auto p2_single = permutation;
 			if (st == 0)
 				RealCPU::rcm<false>(graph, csv_result, p2_single, start, 1, 1);
 			else
 				RealCPU::rcm<true>(graph, csv_result, p2_single, start, 1, 1);
-			if (testBandwidth)
-			{
+			if (testBandwidth) {
 				auto bandwidth = computeBandwidth(graph, p2_single);
-				csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+				csv_result << ",";
+				csv_result << bandwidth;
+				csv_result << std::flush;
 			}
 
-			for (int t = 1; t <= arg_threads.Get(); ++t)
-			{
-				csv_result << ","; csv_result << std::flush;
+			for (int t = 1; t <= arg_threads.Get(); ++t) {
+				csv_result << ",";
+				csv_result << std::flush;
 				permutation.clear();
 				bool match = true;
 				if (st == 0)
@@ -463,22 +462,20 @@ int main(int argc, char** argv)
 				else
 					RealCPU::rcm<true>(graph, csv_result, permutation, start, t, 512);
 				if (st != 0)
-					for (size_t i = 0; i < p2_single.size(); ++i)
-					{
-						if (permutation[i] != p2_single[i])
-						{
-							if (match)
-							{
+					for (size_t i = 0; i < p2_single.size(); ++i) {
+						if (permutation[i] != p2_single[i]) {
+							if (match) {
 								std::cout << "permutation does not match: \n";
 								match = false;
 							}
 							std::cout << "@" << i << ": " << p2_single[i] << " != " << permutation[i] << std::endl;
 						}
 					}
-				if (testBandwidth)
-				{
+				if (testBandwidth) {
 					auto bandwidth = computeBandwidth(graph, permutation);
-					csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+					csv_result << ",";
+					csv_result << bandwidth;
+					csv_result << std::flush;
 				}
 			}
 		}
@@ -486,37 +483,38 @@ int main(int argc, char** argv)
 		checkPermutation(permutation);
 	}
 
-	if (impl == static_cast<int>(Impl::GPU) || impl == static_cast<int>(Impl::ALL))
-	{
-		csv_result << ","; csv_result << std::flush;
+	if (impl == static_cast<int>(Impl::GPU) || impl == static_cast<int>(Impl::ALL)) {
+		csv_result << ",";
+		csv_result << std::flush;
 		permutation.clear();
 
 		GPU_SIMPLE::rcm(graph, csv_result, permutation, start);
 		checkPermutation(permutation);
-		if (testBandwidth)
-		{
+		if (testBandwidth) {
 			auto bandwidth = computeBandwidth(graph, permutation);
-			csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+			csv_result << ",";
+			csv_result << bandwidth;
+			csv_result << std::flush;
 		}
 	}
 
-	if (impl == static_cast<int>(Impl::GPU_BATCH) || impl == static_cast<int>(Impl::ALL))
-	{
-		csv_result << ","; csv_result << std::flush;
+	if (impl == static_cast<int>(Impl::GPU_BATCH) || impl == static_cast<int>(Impl::ALL)) {
+		csv_result << ",";
+		csv_result << std::flush;
 		permutation.clear();
 
 		GPU_BATCH::rcm(graph, csv_result, permutation, start);
 		checkPermutation(permutation);
-		if (testBandwidth)
-		{
+		if (testBandwidth) {
 			auto bandwidth = computeBandwidth(graph, permutation);
-			csv_result << ","; csv_result << bandwidth; csv_result << std::flush;
+			csv_result << ",";
+			csv_result << bandwidth;
+			csv_result << std::flush;
 		}
 	}
 
-	
-	if (arg_output)
-	{
+
+	if (arg_output) {
 		permutation.clear();
 		voidStream no_out;
 		RealCPU::rcm<true>(graph, no_out, permutation, start, 1, 1);
@@ -526,8 +524,42 @@ int main(int argc, char** argv)
 		convert(coo_mat, graph.csr);
 
 		std::string csr_name = arg_output.Get();
-		std::cout << "writing output matrix \"" << csr_name << "\"\n";
-		storeMTX(coo_mat, csr_name.c_str());
+		std::cout << "writing parallel rcm permutation array to: \"" << csr_name << "\"\n";
+		std::ofstream rcm_outfile(csr_name, std::fstream::out);
+
+		// write the permutation array in the same format as expected by dbg
+		// i.e.
+		// n_nodes
+		// n_edges
+		// {orig_id} {mapped_id}
+		rcm_outfile << n << "\n";
+		rcm_outfile << m << "\n";
+
+		std::vector<std::pair<uint32_t, uint32_t>> mappings(n);
+
+		for (uint32_t i = 0; i < n; ++i) {
+			mappings[i].first = permutation[i];
+			mappings[i].second = i;
+		}
+
+		std::sort(mappings.begin(), mappings.end());
+
+		for (uint32_t i = 0; i < n; ++i) {
+			rcm_outfile << mappings[i].first << " " << mappings[i].second << "\n";
+		}
+
+		rcm_outfile.close();
+
+		// todo fix naming (default of ParBatchRCM is reversed)
+		std::ofstream cm_outfile(rcm_path, std::fstream::out);
+
+		cm_outfile << n << "\n";
+		cm_outfile << m << "\n";
+		for (uint32_t i = 0; i < n; ++i) {
+			cm_outfile << mappings[i].first << " " << n - 1 - mappings[i].second << "\n";
+		}
+		cm_outfile.close();
+//		storeMTX(coo_mat, csr_name.c_str());
 	}
 
 	csv_result << std::endl;
